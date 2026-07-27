@@ -35,10 +35,16 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
     Exercise(id: 'ex_3', name: 'Dumbbell Bicep Curl', category: ExerciseCategory.isolation, baseIncrement: 2.5, maxWeightCapacity: 100.0, sets: 1),
   ];
 
+  // STATE FIX #2: Maintain _history as a real chain
   final List<WorkoutSession> _history = [];
+  
+  // STATE FIX #1: Track the current working targetWeight per exercise
+  final Map<String, double> _exerciseTargets = {};
+  final Map<String, int> _exerciseReps = {};
+
   final List<_SetRowData> _rows = [];
 
-  String _bannerMessage = 'Log a set to see progression';
+  String _bannerMessage = 'Log sets and tap Finish to compute progression';
   Color _bannerColor = const Color(0xFF1C1C1E); // Sleek dark grey initially
 
   @override
@@ -49,13 +55,16 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   }
 
   void _addSet() {
+    final currentTargetW = _exerciseTargets[_selectedExercise.id] ?? 100.0;
+    final currentTargetR = _exerciseReps[_selectedExercise.id] ?? 5;
+
     setState(() {
       _rows.add(
         _SetRowData(
           index: _rows.length + 1,
-          initialWeight: 100.0,
-          initialReps: 5,
-          previousText: '100.0 lbs x 5',
+          initialWeight: currentTargetW,
+          initialReps: currentTargetR,
+          previousText: '${currentTargetW.toStringAsFixed(1)} lbs x $currentTargetR',
         ),
       );
     });
@@ -63,16 +72,17 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
 
   void _onCheckmarkTapped(_SetRowData row) {
     setState(() {
+      // STATE FIX #3: Only toggle UI state. No engine calls here.
       row.isCompleted = !row.isCompleted;
     });
-    
-    // Compute progression whenever a set completion status changes
-    _computeProgression();
   }
 
-  void _computeProgression() {
+  void _onFinishTapped() {
     try {
       final completedSets = <WorkoutSet>[];
+      final currentTargetW = _exerciseTargets[_selectedExercise.id] ?? 100.0;
+      final currentTargetR = _exerciseReps[_selectedExercise.id] ?? 5;
+
       for (final row in _rows) {
         if (row.isCompleted) {
           final weightText = row.weightController.text;
@@ -83,8 +93,8 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
           completedSets.add(WorkoutSet(
             id: 'set_${row.index}',
             setNumber: row.index,
-            targetWeight: 100.0, // Fixed baseline for demonstration
-            targetReps: 5,
+            targetWeight: currentTargetW,
+            targetReps: currentTargetR,
             actualWeight: actualWeight,
             actualReps: actualReps,
             exercise: _selectedExercise,
@@ -94,23 +104,32 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
 
       if (completedSets.isEmpty) {
         setState(() {
-          _bannerMessage = 'Log a set to see progression';
-          _bannerColor = const Color(0xFF1C1C1E);
+          _bannerMessage = 'Cannot finish: No sets completed';
+          _bannerColor = Colors.red.shade800;
         });
         return;
       }
 
-      final lastSession = _history.isNotEmpty ? _history.last : null;
-      final effectivePrevious = lastSession ?? WorkoutSession(
-        id: 'dummy',
+      // STATE FIX #2: Find the last session specifically for this exercise to link the chain
+      WorkoutSession? lastSessionForExercise;
+      for (int i = _history.length - 1; i >= 0; i--) {
+        if (_history[i].sets.isNotEmpty && _history[i].sets.first.exercise.id == _selectedExercise.id) {
+          lastSessionForExercise = _history[i];
+          break;
+        }
+      }
+
+      // Engine requires a non-null WorkoutSession parameter for historical pointer
+      final effectivePrevious = lastSessionForExercise ?? WorkoutSession(
+        id: 'dummy_start',
         date: DateTime.now().subtract(const Duration(days: 7)),
         sets: [],
       );
 
       final currentSession = WorkoutSession(
-        id: 'curr_session',
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
         date: DateTime.now(),
-        previousSession: lastSession,
+        previousSession: lastSessionForExercise, // Link to real history chain
         sets: completedSets,
       );
 
@@ -118,18 +137,29 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
       final nextTarget = engine.computeNextTarget(effectivePrevious, currentSession);
 
       setState(() {
-        _bannerMessage = 'RECOMMENDED NEXT: ${nextTarget.targetWeight} lbs x ${nextTarget.targetReps} reps';
-        _bannerColor = Colors.green.shade700; // Success banner
+        _history.add(currentSession);
+        
+        // STATE FIX #4: Update tracked targets for this exercise
+        _exerciseTargets[_selectedExercise.id] = nextTarget.targetWeight;
+        _exerciseReps[_selectedExercise.id] = nextTarget.targetReps;
+
+        _bannerMessage = 'FINISHED! Next Target updated to: ${nextTarget.targetWeight} lbs';
+        _bannerColor = Colors.green.shade700;
+        
+        // Reset the UI for the next workout
+        _rows.clear();
+        _addSet();
       });
     } on ArgumentError catch (e) {
       setState(() {
         _bannerMessage = 'OCL Violation: ${e.message}';
-        _bannerColor = Colors.red.shade800; // Error banner
+        _bannerColor = Colors.red.shade800; 
       });
     } on StateError catch (e) {
+      // STATE FIX #5: Surface StateError cleanly in the banner
       setState(() {
         _bannerMessage = 'Invalid State: ${e.message}';
-        _bannerColor = Colors.red.shade800; // Error banner
+        _bannerColor = Colors.red.shade800; 
       });
     } catch (e) {
       setState(() {
@@ -258,10 +288,13 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                 children: [
                   const Icon(Icons.keyboard_arrow_down, color: Colors.white),
                   const Text('PO TRACKER', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(color: cardColor, borderRadius: BorderRadius.circular(12)),
-                    child: const Text('Finish', style: TextStyle(color: accentColor, fontWeight: FontWeight.bold)),
+                  GestureDetector(
+                    onTap: _onFinishTapped,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(color: cardColor, borderRadius: BorderRadius.circular(12)),
+                      child: const Text('Finish', style: TextStyle(color: accentColor, fontWeight: FontWeight.bold)),
+                    ),
                   ),
                 ],
               ),
@@ -309,7 +342,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                                         _selectedExercise = val;
                                         _rows.clear();
                                         _addSet();
-                                        _bannerMessage = 'Log a set to see progression';
+                                        _bannerMessage = 'Log sets and tap Finish to compute progression';
                                         _bannerColor = cardColor;
                                       });
                                     }
