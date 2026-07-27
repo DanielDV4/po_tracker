@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../domain/models.dart';
 import '../domain/overload_engine.dart';
+import '../data/exercise_catalog_loader.dart';
 
 class _SetRowData {
   final int index;
@@ -27,36 +28,44 @@ class WorkoutScreen extends StatefulWidget {
 }
 
 class _WorkoutScreenState extends State<WorkoutScreen> {
-  // Mock Database
-  late Exercise _selectedExercise;
-  final List<Exercise> _exercises = [
-    Exercise(id: 'ex_1', name: 'Barbell Squat', category: ExerciseCategory.compound, baseIncrement: 5.0, maxWeightCapacity: 600.0, sets: 1),
-    Exercise(id: 'ex_2', name: 'Barbell Bench Press', category: ExerciseCategory.compound, baseIncrement: 5.0, maxWeightCapacity: 400.0, sets: 1),
-    Exercise(id: 'ex_3', name: 'Dumbbell Bicep Curl', category: ExerciseCategory.isolation, baseIncrement: 2.5, maxWeightCapacity: 100.0, sets: 1),
-  ];
+  bool _isLoading = true;
+  List<Exercise> _allExercises = [];
+  Exercise? _selectedExercise;
 
-  // STATE FIX #2: Maintain _history as a real chain
   final List<WorkoutSession> _history = [];
   
-  // STATE FIX #1: Track the current working targetWeight per exercise
   final Map<String, double> _exerciseTargets = {};
   final Map<String, int> _exerciseReps = {};
 
   final List<_SetRowData> _rows = [];
 
   String _bannerMessage = 'Log sets and tap Finish to compute progression';
-  Color _bannerColor = const Color(0xFF1C1C1E); // Sleek dark grey initially
+  Color _bannerColor = const Color(0xFF1C1C1E);
 
   @override
   void initState() {
     super.initState();
-    _selectedExercise = _exercises.first;
-    _addSet(); // Initialize with first set
+    _loadCatalog();
+  }
+
+  Future<void> _loadCatalog() async {
+    final catalog = await loadExerciseCatalog();
+    if (mounted) {
+      setState(() {
+        _allExercises = catalog;
+        if (catalog.isNotEmpty) {
+          _selectedExercise = catalog.first;
+          _addSet(); // Initialize with first set safely AFTER loading
+        }
+        _isLoading = false;
+      });
+    }
   }
 
   void _addSet() {
-    final currentTargetW = _exerciseTargets[_selectedExercise.id] ?? 100.0;
-    final currentTargetR = _exerciseReps[_selectedExercise.id] ?? 5;
+    if (_selectedExercise == null) return;
+    final currentTargetW = _exerciseTargets[_selectedExercise!.id] ?? 100.0;
+    final currentTargetR = _exerciseReps[_selectedExercise!.id] ?? 5;
 
     setState(() {
       _rows.add(
@@ -72,16 +81,17 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
 
   void _onCheckmarkTapped(_SetRowData row) {
     setState(() {
-      // STATE FIX #3: Only toggle UI state. No engine calls here.
       row.isCompleted = !row.isCompleted;
     });
   }
 
   void _onFinishTapped() {
+    if (_selectedExercise == null) return;
+    
     try {
       final completedSets = <WorkoutSet>[];
-      final currentTargetW = _exerciseTargets[_selectedExercise.id] ?? 100.0;
-      final currentTargetR = _exerciseReps[_selectedExercise.id] ?? 5;
+      final currentTargetW = _exerciseTargets[_selectedExercise!.id] ?? 100.0;
+      final currentTargetR = _exerciseReps[_selectedExercise!.id] ?? 5;
 
       for (final row in _rows) {
         if (row.isCompleted) {
@@ -97,7 +107,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
             targetReps: currentTargetR,
             actualWeight: actualWeight,
             actualReps: actualReps,
-            exercise: _selectedExercise,
+            exercise: _selectedExercise!,
           ));
         }
       }
@@ -110,16 +120,14 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
         return;
       }
 
-      // STATE FIX #2: Find the last session specifically for this exercise to link the chain
       WorkoutSession? lastSessionForExercise;
       for (int i = _history.length - 1; i >= 0; i--) {
-        if (_history[i].sets.isNotEmpty && _history[i].sets.first.exercise.id == _selectedExercise.id) {
+        if (_history[i].sets.isNotEmpty && _history[i].sets.first.exercise.id == _selectedExercise!.id) {
           lastSessionForExercise = _history[i];
           break;
         }
       }
 
-      // Engine requires a non-null WorkoutSession parameter for historical pointer
       final effectivePrevious = lastSessionForExercise ?? WorkoutSession(
         id: 'dummy_start',
         date: DateTime.now().subtract(const Duration(days: 7)),
@@ -129,7 +137,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
       final currentSession = WorkoutSession(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         date: DateTime.now(),
-        previousSession: lastSessionForExercise, // Link to real history chain
+        previousSession: lastSessionForExercise, 
         sets: completedSets,
       );
 
@@ -139,14 +147,12 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
       setState(() {
         _history.add(currentSession);
         
-        // STATE FIX #4: Update tracked targets for this exercise
-        _exerciseTargets[_selectedExercise.id] = nextTarget.targetWeight;
-        _exerciseReps[_selectedExercise.id] = nextTarget.targetReps;
+        _exerciseTargets[_selectedExercise!.id] = nextTarget.targetWeight;
+        _exerciseReps[_selectedExercise!.id] = nextTarget.targetReps;
 
         _bannerMessage = 'FINISHED! Next Target updated to: ${nextTarget.targetWeight} lbs';
         _bannerColor = Colors.green.shade700;
         
-        // Reset the UI for the next workout
         _rows.clear();
         _addSet();
       });
@@ -156,7 +162,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
         _bannerColor = Colors.red.shade800; 
       });
     } on StateError catch (e) {
-      // STATE FIX #5: Surface StateError cleanly in the banner
       setState(() {
         _bannerMessage = 'Invalid State: ${e.message}';
         _bannerColor = Colors.red.shade800; 
@@ -167,6 +172,114 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
         _bannerColor = Colors.red.shade800;
       });
     }
+  }
+
+  void _showExercisePicker() {
+    String searchQuery = '';
+    ExerciseCategory? filterCategory;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1C1C1E),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final filteredList = _allExercises.where((ex) {
+              final matchesQuery = ex.name.toLowerCase().contains(searchQuery.toLowerCase());
+              final matchesCat = filterCategory == null || ex.category == filterCategory;
+              return matchesQuery && matchesCat;
+            }).toList();
+
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom,
+                top: 24, left: 16, right: 16
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    onChanged: (val) => setModalState(() => searchQuery = val),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      hintText: 'Search exercises...',
+                      hintStyle: const TextStyle(color: Colors.white54),
+                      prefixIcon: const Icon(Icons.search, color: Colors.white54),
+                      filled: true,
+                      fillColor: const Color(0xFF2C2C2E),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        _buildFilterChip('All', null, filterCategory, (cat) => setModalState(() => filterCategory = cat)),
+                        _buildFilterChip('Compound', ExerciseCategory.compound, filterCategory, (cat) => setModalState(() => filterCategory = cat)),
+                        _buildFilterChip('Isolation', ExerciseCategory.isolation, filterCategory, (cat) => setModalState(() => filterCategory = cat)),
+                        _buildFilterChip('Bodyweight', ExerciseCategory.bodyweight, filterCategory, (cat) => setModalState(() => filterCategory = cat)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.4,
+                    child: filteredList.isEmpty 
+                      ? const Center(child: Text('No exercises found.', style: TextStyle(color: Colors.white54)))
+                      : ListView.builder(
+                          itemCount: filteredList.length,
+                          itemBuilder: (context, index) {
+                            final ex = filteredList[index];
+                            return ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(ex.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                              subtitle: Text(ex.category.name.toUpperCase(), style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                              onTap: () {
+                                Navigator.pop(context);
+                                _selectNewExercise(ex);
+                              },
+                            );
+                          },
+                        ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildFilterChip(String label, ExerciseCategory? value, ExerciseCategory? current, Function(ExerciseCategory?) onSelected) {
+    final isSelected = value == current;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8.0),
+      child: ChoiceChip(
+        label: Text(label, style: TextStyle(color: isSelected ? Colors.white : Colors.white54, fontWeight: FontWeight.bold)),
+        selected: isSelected,
+        selectedColor: Colors.blueAccent.withOpacity(0.2),
+        backgroundColor: const Color(0xFF2C2C2E),
+        showCheckmark: false,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: BorderSide.none),
+        onSelected: (_) => onSelected(value),
+      ),
+    );
+  }
+
+  void _selectNewExercise(Exercise ex) {
+    if (ex.id == _selectedExercise?.id) return;
+    setState(() {
+      _selectedExercise = ex;
+      _rows.clear();
+      _addSet();
+      _bannerMessage = 'Log sets and tap Finish to compute progression';
+      _bannerColor = const Color(0xFF1C1C1E);
+    });
   }
 
   @override
@@ -194,7 +307,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       child: Row(
         children: [
-          // SET Index
           SizedBox(
             width: 40,
             child: Container(
@@ -206,12 +318,10 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
               child: Text('${row.index}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13), textAlign: TextAlign.center),
             ),
           ),
-          // PREVIOUS Baseline Text
           Expanded(
             flex: 3,
             child: Text(row.previousText, style: const TextStyle(color: Colors.white54, fontSize: 14), textAlign: TextAlign.center),
           ),
-          // LBS Field
           Expanded(
             flex: 2,
             child: Padding(
@@ -230,7 +340,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
               ),
             ),
           ),
-          // REPS Field
           Expanded(
             flex: 2,
             child: Padding(
@@ -249,7 +358,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
               ),
             ),
           ),
-          // CHECKMARK
           SizedBox(
             width: 40,
             child: GestureDetector(
@@ -271,16 +379,34 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
 
   @override
   Widget build(BuildContext context) {
-    const bgColor = Color(0xFF000000); // Pure black background
-    const cardColor = Color(0xFF1C1C1E); // Apple-style elevated dark gray
+    const bgColor = Color(0xFF000000);
+    const cardColor = Color(0xFF1C1C1E);
     const accentColor = Colors.blueAccent;
+
+    if (_isLoading) {
+      return const Scaffold(
+        backgroundColor: bgColor,
+        body: Center(child: CircularProgressIndicator(color: accentColor)),
+      );
+    }
+
+    if (_allExercises.isEmpty || _selectedExercise == null) {
+      return const Scaffold(
+        backgroundColor: bgColor,
+        body: Center(
+          child: Text(
+            'Failed to load exercises or catalog is empty.', 
+            style: TextStyle(color: Colors.redAccent, fontSize: 16)
+          )
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: bgColor,
       body: SafeArea(
         child: Column(
           children: [
-            // Top App Header
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
               child: Row(
@@ -300,7 +426,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
               ),
             ),
             
-            // Summary Stats
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
@@ -311,7 +436,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
             ),
             const SizedBox(height: 24),
             
-            // Exercise Card
             Expanded(
               child: SingleChildScrollView(
                 child: Container(
@@ -322,46 +446,35 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                   ),
                   child: Column(
                     children: [
-                      // Exercise Header
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: DropdownButtonHideUnderline(
-                                child: DropdownButton<Exercise>(
-                                  isExpanded: true,
-                                  value: _selectedExercise,
-                                  dropdownColor: const Color(0xFF2C2C2E),
-                                  icon: const SizedBox.shrink(),
-                                  items: _exercises.map((ex) => DropdownMenuItem(value: ex, child: Text(ex.name, style: const TextStyle(color: Colors.blueAccent, fontSize: 18, fontWeight: FontWeight.bold)))).toList(),
-                                  onChanged: (val) {
-                                    if (val != null) {
-                                      setState(() {
-                                        _selectedExercise = val;
-                                        _rows.clear();
-                                        _addSet();
-                                        _bannerMessage = 'Log sets and tap Finish to compute progression';
-                                        _bannerColor = cardColor;
-                                      });
-                                    }
-                                  },
+                      // Interactive Exercise Picker Header
+                      GestureDetector(
+                        onTap: _showExercisePicker,
+                        child: Container(
+                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                          color: Colors.transparent, // Ensures entire area is tappable
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _selectedExercise!.name, 
+                                  style: const TextStyle(color: Colors.blueAccent, fontSize: 18, fontWeight: FontWeight.bold),
+                                  overflow: TextOverflow.ellipsis,
                                 )
-                              )
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8)),
-                              child: Text(_selectedExercise.category.name.toUpperCase(), style: const TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
-                            ),
-                            const SizedBox(width: 8),
-                            const Icon(Icons.more_vert, color: Colors.white54),
-                          ],
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8)),
+                                child: Text(_selectedExercise!.category.name.toUpperCase(), style: const TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
+                              ),
+                              const SizedBox(width: 8),
+                              const Icon(Icons.keyboard_arrow_down, color: Colors.blueAccent),
+                            ],
+                          ),
                         ),
                       ),
                       
-                      // Table Headers
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                         child: Row(
@@ -375,10 +488,8 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                         ),
                       ),
                       
-                      // Render Sets
                       ..._rows.map((row) => _buildSetRow(row)).toList(),
                       
-                      // Add Set Button
                       Padding(
                         padding: const EdgeInsets.all(12),
                         child: TextButton(
@@ -397,7 +508,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
               ),
             ),
             
-            // Bottom Banner (Engine Output)
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(16),
