@@ -32,8 +32,10 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   List<Exercise> _allExercises = [];
   Exercise? _selectedExercise;
 
+  // History tracking for progression chains
   final List<WorkoutSession> _history = [];
   
+  // Bug Fix 1: Track the working targetWeight per exercise persistently
   final Map<String, double> _exerciseTargets = {};
   final Map<String, int> _exerciseReps = {};
 
@@ -55,7 +57,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
         _allExercises = catalog;
         if (catalog.isNotEmpty) {
           _selectedExercise = catalog.first;
-          _addSet(); // Initialize with first set safely AFTER loading
+          _addSet(); 
         }
         _isLoading = false;
       });
@@ -64,6 +66,8 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
 
   void _addSet() {
     if (_selectedExercise == null) return;
+    
+    // Seed at a sane default (100.0) only the first time the exercise is ever used.
     final currentTargetW = _exerciseTargets[_selectedExercise!.id] ?? 100.0;
     final currentTargetR = _exerciseReps[_selectedExercise!.id] ?? 5;
 
@@ -80,6 +84,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   }
 
   void _onCheckmarkTapped(_SetRowData row) {
+    // Checkmark taps only toggle UI state. No engine calls!
     setState(() {
       row.isCompleted = !row.isCompleted;
     });
@@ -90,22 +95,26 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
     
     try {
       final completedSets = <WorkoutSet>[];
-      final currentTargetW = _exerciseTargets[_selectedExercise!.id] ?? 100.0;
       final currentTargetR = _exerciseReps[_selectedExercise!.id] ?? 5;
 
       for (final row in _rows) {
         if (row.isCompleted) {
           final weightText = row.weightController.text;
           final repsText = row.repsController.text;
-          final actualWeight = weightText.isEmpty ? null : double.parse(weightText);
+          
+          final parsedWeight = weightText.isEmpty ? null : double.parse(weightText);
           final actualReps = repsText.isEmpty ? null : int.parse(repsText);
           
+          // Bug Fix 1: Ensure custom weight values typed by the user are correctly passed into WorkoutSet
+          // as the target basis for progression, overriding the cached default.
+          final setTargetWeight = parsedWeight ?? (_exerciseTargets[_selectedExercise!.id] ?? 100.0);
+
           completedSets.add(WorkoutSet(
             id: 'set_${row.index}',
             setNumber: row.index,
-            targetWeight: currentTargetW,
+            targetWeight: setTargetWeight, 
             targetReps: currentTargetR,
-            actualWeight: actualWeight,
+            actualWeight: parsedWeight,
             actualReps: actualReps,
             exercise: _selectedExercise!,
           ));
@@ -120,6 +129,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
         return;
       }
 
+      // Bug Fix 2: Session history lookup points correctly to the immediate past session for THAT SPECIFIC EXERCISE.
       WorkoutSession? lastSessionForExercise;
       for (int i = _history.length - 1; i >= 0; i--) {
         if (_history[i].sets.isNotEmpty && _history[i].sets.first.exercise.id == _selectedExercise!.id) {
@@ -128,6 +138,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
         }
       }
 
+      // Provide a valid empty anchor if no history exists yet
       final effectivePrevious = lastSessionForExercise ?? WorkoutSession(
         id: 'dummy_start',
         date: DateTime.now().subtract(const Duration(days: 7)),
@@ -137,7 +148,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
       final currentSession = WorkoutSession(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         date: DateTime.now(),
-        previousSession: lastSessionForExercise, 
+        previousSession: lastSessionForExercise, // Link firmly to the past chain for 3-strike deload logic
         sets: completedSets,
       );
 
@@ -145,16 +156,19 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
       final nextTarget = engine.computeNextTarget(effectivePrevious, currentSession);
 
       setState(() {
+        // Maintain _history as a real chain
         _history.add(currentSession);
         
+        // Use the returned result to update the tracked targetWeight persistently
         _exerciseTargets[_selectedExercise!.id] = nextTarget.targetWeight;
         _exerciseReps[_selectedExercise!.id] = nextTarget.targetReps;
 
-        _bannerMessage = 'FINISHED! Next Target updated to: ${nextTarget.targetWeight} lbs';
+        _bannerMessage = 'SESSION FINISHED! Next Target: ${nextTarget.targetWeight} lbs x ${nextTarget.targetReps} reps';
         _bannerColor = Colors.green.shade700;
         
+        // Clear out stale state and re-initialize the set row with the newly calculated target weight
         _rows.clear();
-        _addSet();
+        _addSet(); 
       });
     } on ArgumentError catch (e) {
       setState(() {
@@ -162,6 +176,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
         _bannerColor = Colors.red.shade800; 
       });
     } on StateError catch (e) {
+      // Surface StateError cleanly
       setState(() {
         _bannerMessage = 'Invalid State: ${e.message}';
         _bannerColor = Colors.red.shade800; 
@@ -446,12 +461,11 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                   ),
                   child: Column(
                     children: [
-                      // Interactive Exercise Picker Header
                       GestureDetector(
                         onTap: _showExercisePicker,
                         child: Container(
                           padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                          color: Colors.transparent, // Ensures entire area is tappable
+                          color: Colors.transparent, 
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
