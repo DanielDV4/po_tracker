@@ -13,11 +13,11 @@ class _SetRowData {
   _SetRowData({
     required this.index,
     this.isCompleted = false,
-    required double initialWeight,
-    required int initialReps,
+    required String initialWeightText,
+    required String initialRepsText,
     required this.previousText,
-  })  : weightController = TextEditingController(text: initialWeight.toStringAsFixed(1)),
-        repsController = TextEditingController(text: initialReps.toString());
+  })  : weightController = TextEditingController(text: initialWeightText),
+        repsController = TextEditingController(text: initialRepsText);
 }
 
 class WorkoutScreen extends StatefulWidget {
@@ -35,9 +35,9 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   // History tracking for progression chains
   final List<WorkoutSession> _history = [];
   
-  // Track the working targetWeight per exercise persistently
-  final Map<String, double> _exerciseTargets = {};
-  final Map<String, int> _exerciseReps = {};
+  // Independent state trackers per exercise ID for Hevy-style memory
+  final Map<String, double> _exerciseCurrentWeights = {};
+  final Map<String, int> _exerciseCurrentReps = {};
 
   final List<_SetRowData> _rows = [];
 
@@ -67,16 +67,46 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   void _addSet() {
     if (_selectedExercise == null) return;
     
-    final currentTargetW = _exerciseTargets[_selectedExercise!.id] ?? 100.0;
-    final currentTargetR = _exerciseReps[_selectedExercise!.id] ?? 5;
+    final currentTargetW = _exerciseCurrentWeights[_selectedExercise!.id];
+    final currentTargetR = _exerciseCurrentReps[_selectedExercise!.id];
+    
+    // First-time UX: Leave text fields empty instead of forcing 100.0
+    final initialWeightText = currentTargetW != null ? currentTargetW.toStringAsFixed(1) : '';
+    final initialRepsText = currentTargetR != null ? currentTargetR.toString() : '';
+
+    // Hevy-style Previous Column Lookup
+    String prevText = '—';
+    WorkoutSession? lastSession;
+    for (int i = _history.length - 1; i >= 0; i--) {
+      if (_history[i].sets.isNotEmpty && _history[i].sets.first.exercise.id == _selectedExercise!.id) {
+        lastSession = _history[i];
+        break;
+      }
+    }
+    
+    final setIndex = _rows.length + 1;
+    if (lastSession != null) {
+      try {
+        // Look up the exact historical performance for THAT specific set index
+        final matchingSet = lastSession.sets.firstWhere((s) => s.setNumber == setIndex);
+        final w = matchingSet.actualWeight ?? matchingSet.targetWeight;
+        final r = matchingSet.actualReps ?? matchingSet.targetReps;
+        prevText = '${w.toStringAsFixed(1)} lbs x $r';
+      } catch (_) {
+        // If they add more sets this time than last time, leave as blank dash
+        prevText = '—';
+      }
+    } else {
+      prevText = 'First time';
+    }
 
     setState(() {
       _rows.add(
         _SetRowData(
-          index: _rows.length + 1,
-          initialWeight: currentTargetW,
-          initialReps: currentTargetR,
-          previousText: '${currentTargetW.toStringAsFixed(1)} lbs x $currentTargetR',
+          index: setIndex,
+          initialWeightText: initialWeightText,
+          initialRepsText: initialRepsText,
+          previousText: prevText,
         ),
       );
     });
@@ -93,25 +123,27 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
     
     try {
       final completedSets = <WorkoutSet>[];
-      final currentTargetR = _exerciseReps[_selectedExercise!.id] ?? 5;
 
       for (final row in _rows) {
         if (row.isCompleted) {
           final weightText = row.weightController.text;
           final repsText = row.repsController.text;
           
-          final parsedWeight = weightText.isEmpty ? null : double.parse(weightText);
-          final actualReps = repsText.isEmpty ? null : int.parse(repsText);
+          final parsedWeight = double.tryParse(weightText);
+          final parsedReps = int.tryParse(repsText);
           
-          final setTargetWeight = parsedWeight ?? (_exerciseTargets[_selectedExercise!.id] ?? 100.0);
+          // Engine Bridge: Feed custom user inputs securely to the Domain layer
+          // If the field is empty and we have no state, fallback to 0.0 (which triggers OCL validation rejection)
+          final setTargetWeight = parsedWeight ?? (_exerciseCurrentWeights[_selectedExercise!.id] ?? 0.0);
+          final setTargetReps = parsedReps ?? (_exerciseCurrentReps[_selectedExercise!.id] ?? 5);
 
           completedSets.add(WorkoutSet(
             id: 'set_${row.index}',
             setNumber: row.index,
             targetWeight: setTargetWeight, 
-            targetReps: currentTargetR,
+            targetReps: setTargetReps,
             actualWeight: parsedWeight,
-            actualReps: actualReps,
+            actualReps: parsedReps,
             exercise: _selectedExercise!,
           ));
         }
@@ -152,8 +184,8 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
       setState(() {
         _history.add(currentSession);
         
-        _exerciseTargets[_selectedExercise!.id] = nextTarget.targetWeight;
-        _exerciseReps[_selectedExercise!.id] = nextTarget.targetReps;
+        _exerciseCurrentWeights[_selectedExercise!.id] = nextTarget.targetWeight;
+        _exerciseCurrentReps[_selectedExercise!.id] = nextTarget.targetReps;
 
         _bannerMessage = 'SESSION FINISHED! Next Target: ${nextTarget.targetWeight} lbs x ${nextTarget.targetReps} reps';
         _bannerColor = Colors.green.shade700;
@@ -335,7 +367,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         children: [
-          // Set Badge
           SizedBox(
             width: 36,
             child: Container(
@@ -348,13 +379,11 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
             ),
           ),
           
-          // Previous Context
           Expanded(
             flex: 3,
             child: Text(row.previousText, style: const TextStyle(color: Colors.white54, fontSize: 13), textAlign: TextAlign.center),
           ),
           
-          // Custom bordered LBS input
           SizedBox(
             width: 60,
             child: Container(
@@ -367,7 +396,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                 controller: row.weightController,
                 keyboardType: TextInputType.number,
                 textAlign: TextAlign.center,
-                onChanged: (_) => setState(() {}), // Trigger dynamic volume calculation
+                onChanged: (_) => setState(() {}),
                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
                 decoration: const InputDecoration(
                   contentPadding: EdgeInsets.symmetric(vertical: 8),
@@ -379,7 +408,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
           ),
           const SizedBox(width: 12),
           
-          // Custom bordered REPS input
           SizedBox(
             width: 60,
             child: Container(
@@ -403,7 +431,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
             ),
           ),
           
-          // Tactile Checkmark
           SizedBox(
             width: 44,
             child: Align(
@@ -458,7 +485,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.close, color: Colors.white),
-          onPressed: () {}, // Close placeholder
+          onPressed: () {}, 
         ),
         title: const Text('Strength Session', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
         centerTitle: true,
@@ -480,7 +507,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Dynamic Summary Strip
             Container(
               color: cardColor,
               padding: const EdgeInsets.fromLTRB(0, 4, 0, 16),
@@ -498,7 +524,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  // Gorgeous Rounded Dark Card for Exercise
                   Container(
                     decoration: BoxDecoration(
                       color: cardColor,
@@ -507,7 +532,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                     ),
                     child: Column(
                       children: [
-                        // Exercise Header
                         InkWell(
                           onTap: _showExercisePicker,
                           borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
@@ -535,7 +559,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                           ),
                         ),
                         
-                        // Clean Notes Field
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 16),
                           child: TextField(
@@ -552,7 +575,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                         ),
                         const SizedBox(height: 20),
                         
-                        // Professional Table Headers
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 16),
                           child: Row(
@@ -568,10 +590,8 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                         ),
                         const SizedBox(height: 8),
                         
-                        // Render Row Sets
                         ..._rows.map((row) => _buildSetRow(row)).toList(),
                         
-                        // Modern Add Set Action Button
                         Padding(
                           padding: const EdgeInsets.all(16),
                           child: OutlinedButton(
@@ -593,7 +613,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
               ),
             ),
             
-            // Sticky Calculation Panel / Banner
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
