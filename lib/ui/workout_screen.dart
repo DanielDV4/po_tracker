@@ -279,7 +279,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
       child: ChoiceChip(
         label: Text(label, style: TextStyle(color: isSelected ? Colors.white : Colors.white54, fontWeight: FontWeight.bold)),
         selected: isSelected,
-        selectedColor: Colors.blueAccent.withOpacity(0.2),
+        selectedColor: Colors.blueAccent.withValues(alpha: 0.2),
         backgroundColor: const Color(0xFF2C2C2E),
         showCheckmark: false,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: BorderSide.none),
@@ -326,9 +326,9 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   }
 
   Widget _buildSetRow(_SetRowData row) {
-    final bgColor = row.isCompleted ? Colors.green.withOpacity(0.12) : Colors.transparent;
+    final bgColor = row.isCompleted ? Colors.green.withValues(alpha: 0.12) : Colors.transparent;
     final badgeColor = row.isCompleted ? Colors.green.shade600 : const Color(0xFF2C2C2E);
-    final borderColor = row.isCompleted ? Colors.green.withOpacity(0.3) : Colors.white10;
+    final borderColor = row.isCompleted ? Colors.green.withValues(alpha: 0.3) : Colors.white10;
 
     return Container(
       color: bgColor,
@@ -468,7 +468,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
             child: TextButton(
               onPressed: _onFinishTapped,
               style: TextButton.styleFrom(
-                backgroundColor: Colors.blueAccent.withOpacity(0.15),
+                backgroundColor: Colors.blueAccent.withValues(alpha: 0.15),
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
               ),
@@ -579,7 +579,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                             style: OutlinedButton.styleFrom(
                               foregroundColor: Colors.blueAccent, 
                               side: const BorderSide(color: Colors.white10),
-                              backgroundColor: Colors.white.withOpacity(0.02),
+                              backgroundColor: Colors.white.withValues(alpha: 0.02),
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                               minimumSize: const Size.fromHeight(44),
                             ),
@@ -600,7 +600,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
               decoration: BoxDecoration(
                 color: _bannerColor,
                 boxShadow: [
-                  BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 10, offset: const Offset(0, -5))
+                  BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 10, offset: const Offset(0, -5))
                 ],
               ),
               child: SafeArea(
