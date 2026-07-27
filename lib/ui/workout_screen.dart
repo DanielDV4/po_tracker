@@ -35,7 +35,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   // History tracking for progression chains
   final List<WorkoutSession> _history = [];
   
-  // Bug Fix 1: Track the working targetWeight per exercise persistently
+  // Track the working targetWeight per exercise persistently
   final Map<String, double> _exerciseTargets = {};
   final Map<String, int> _exerciseReps = {};
 
@@ -67,7 +67,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   void _addSet() {
     if (_selectedExercise == null) return;
     
-    // Seed at a sane default (100.0) only the first time the exercise is ever used.
     final currentTargetW = _exerciseTargets[_selectedExercise!.id] ?? 100.0;
     final currentTargetR = _exerciseReps[_selectedExercise!.id] ?? 5;
 
@@ -84,7 +83,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   }
 
   void _onCheckmarkTapped(_SetRowData row) {
-    // Checkmark taps only toggle UI state. No engine calls!
     setState(() {
       row.isCompleted = !row.isCompleted;
     });
@@ -105,8 +103,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
           final parsedWeight = weightText.isEmpty ? null : double.parse(weightText);
           final actualReps = repsText.isEmpty ? null : int.parse(repsText);
           
-          // Bug Fix 1: Ensure custom weight values typed by the user are correctly passed into WorkoutSet
-          // as the target basis for progression, overriding the cached default.
           final setTargetWeight = parsedWeight ?? (_exerciseTargets[_selectedExercise!.id] ?? 100.0);
 
           completedSets.add(WorkoutSet(
@@ -129,7 +125,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
         return;
       }
 
-      // Bug Fix 2: Session history lookup points correctly to the immediate past session for THAT SPECIFIC EXERCISE.
       WorkoutSession? lastSessionForExercise;
       for (int i = _history.length - 1; i >= 0; i--) {
         if (_history[i].sets.isNotEmpty && _history[i].sets.first.exercise.id == _selectedExercise!.id) {
@@ -138,7 +133,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
         }
       }
 
-      // Provide a valid empty anchor if no history exists yet
       final effectivePrevious = lastSessionForExercise ?? WorkoutSession(
         id: 'dummy_start',
         date: DateTime.now().subtract(const Duration(days: 7)),
@@ -148,7 +142,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
       final currentSession = WorkoutSession(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         date: DateTime.now(),
-        previousSession: lastSessionForExercise, // Link firmly to the past chain for 3-strike deload logic
+        previousSession: lastSessionForExercise, 
         sets: completedSets,
       );
 
@@ -156,17 +150,14 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
       final nextTarget = engine.computeNextTarget(effectivePrevious, currentSession);
 
       setState(() {
-        // Maintain _history as a real chain
         _history.add(currentSession);
         
-        // Use the returned result to update the tracked targetWeight persistently
         _exerciseTargets[_selectedExercise!.id] = nextTarget.targetWeight;
         _exerciseReps[_selectedExercise!.id] = nextTarget.targetReps;
 
         _bannerMessage = 'SESSION FINISHED! Next Target: ${nextTarget.targetWeight} lbs x ${nextTarget.targetReps} reps';
         _bannerColor = Colors.green.shade700;
         
-        // Clear out stale state and re-initialize the set row with the newly calculated target weight
         _rows.clear();
         _addSet(); 
       });
@@ -176,7 +167,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
         _bannerColor = Colors.red.shade800; 
       });
     } on StateError catch (e) {
-      // Surface StateError cleanly
       setState(() {
         _bannerMessage = 'Invalid State: ${e.message}';
         _bannerColor = Colors.red.shade800; 
@@ -187,6 +177,18 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
         _bannerColor = Colors.red.shade800;
       });
     }
+  }
+
+  double _calculateVolume() {
+    double vol = 0;
+    for (var r in _rows) {
+      if (r.isCompleted) {
+        final w = double.tryParse(r.weightController.text) ?? 0;
+        final reps = int.tryParse(r.repsController.text) ?? 0;
+        vol += w * reps;
+      }
+    }
+    return vol;
   }
 
   void _showExercisePicker() {
@@ -306,84 +308,117 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
     super.dispose();
   }
 
-  Widget _buildStatColumn(String label, String value) {
+  Widget _buildMetric(String label, String value, IconData icon) {
     return Column(
       children: [
-        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 4),
-        Text(value, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: Colors.white54, size: 14),
+            const SizedBox(width: 4),
+            Text(label, style: const TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(value, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
       ],
     );
   }
 
   Widget _buildSetRow(_SetRowData row) {
+    final bgColor = row.isCompleted ? Colors.green.withOpacity(0.12) : Colors.transparent;
+    final badgeColor = row.isCompleted ? Colors.green.shade600 : const Color(0xFF2C2C2E);
+    final borderColor = row.isCompleted ? Colors.green.withOpacity(0.3) : Colors.white10;
+
     return Container(
-      color: row.isCompleted ? Colors.green.withOpacity(0.05) : Colors.transparent,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      color: bgColor,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         children: [
+          // Set Badge
           SizedBox(
-            width: 40,
+            width: 36,
             child: Container(
               padding: const EdgeInsets.symmetric(vertical: 4),
               decoration: BoxDecoration(
-                color: row.isCompleted ? Colors.green.shade700 : const Color(0xFF2C2C2E),
-                borderRadius: BorderRadius.circular(6),
+                color: badgeColor,
+                borderRadius: BorderRadius.circular(8),
               ),
               child: Text('${row.index}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13), textAlign: TextAlign.center),
             ),
           ),
+          
+          // Previous Context
           Expanded(
             flex: 3,
-            child: Text(row.previousText, style: const TextStyle(color: Colors.white54, fontSize: 14), textAlign: TextAlign.center),
+            child: Text(row.previousText, style: const TextStyle(color: Colors.white54, fontSize: 13), textAlign: TextAlign.center),
           ),
-          Expanded(
-            flex: 2,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
+          
+          // Custom bordered LBS input
+          SizedBox(
+            width: 60,
+            child: Container(
+              decoration: BoxDecoration(
+                color: row.isCompleted ? Colors.transparent : const Color(0xFF2C2C2E),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: borderColor),
+              ),
               child: TextField(
                 controller: row.weightController,
                 keyboardType: TextInputType.number,
                 textAlign: TextAlign.center,
+                onChanged: (_) => setState(() {}), // Trigger dynamic volume calculation
                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: row.isCompleted ? Colors.transparent : const Color(0xFF2C2C2E),
-                  contentPadding: EdgeInsets.zero,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide.none),
+                decoration: const InputDecoration(
+                  contentPadding: EdgeInsets.symmetric(vertical: 8),
+                  border: InputBorder.none,
+                  isDense: true,
                 ),
               ),
             ),
           ),
-          Expanded(
-            flex: 2,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
+          const SizedBox(width: 12),
+          
+          // Custom bordered REPS input
+          SizedBox(
+            width: 60,
+            child: Container(
+              decoration: BoxDecoration(
+                color: row.isCompleted ? Colors.transparent : const Color(0xFF2C2C2E),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: borderColor),
+              ),
               child: TextField(
                 controller: row.repsController,
                 keyboardType: TextInputType.number,
                 textAlign: TextAlign.center,
+                onChanged: (_) => setState(() {}),
                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: row.isCompleted ? Colors.transparent : const Color(0xFF2C2C2E),
-                  contentPadding: EdgeInsets.zero,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide.none),
+                decoration: const InputDecoration(
+                  contentPadding: EdgeInsets.symmetric(vertical: 8),
+                  border: InputBorder.none,
+                  isDense: true,
                 ),
               ),
             ),
           ),
+          
+          // Tactile Checkmark
           SizedBox(
-            width: 40,
-            child: GestureDetector(
-              onTap: () => _onCheckmarkTapped(row),
-              child: Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: row.isCompleted ? Colors.green.shade700 : const Color(0xFF2C2C2E),
-                  borderRadius: BorderRadius.circular(6),
+            width: 44,
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: GestureDetector(
+                onTap: () => _onCheckmarkTapped(row),
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: badgeColor,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.check, color: row.isCompleted ? Colors.white : Colors.white54, size: 18),
                 ),
-                child: Icon(Icons.check, color: row.isCompleted ? Colors.white : Colors.white54, size: 18),
               ),
             ),
           ),
@@ -396,12 +431,11 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   Widget build(BuildContext context) {
     const bgColor = Color(0xFF000000);
     const cardColor = Color(0xFF1C1C1E);
-    const accentColor = Colors.blueAccent;
 
     if (_isLoading) {
       return const Scaffold(
         backgroundColor: bgColor,
-        body: Center(child: CircularProgressIndicator(color: accentColor)),
+        body: Center(child: CircularProgressIndicator(color: Colors.blueAccent)),
       );
     }
 
@@ -419,133 +453,167 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
 
     return Scaffold(
       backgroundColor: bgColor,
+      appBar: AppBar(
+        backgroundColor: cardColor,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.close, color: Colors.white),
+          onPressed: () {}, // Close placeholder
+        ),
+        title: const Text('Strength Session', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+        centerTitle: true,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: TextButton(
+              onPressed: _onFinishTapped,
+              style: TextButton.styleFrom(
+                backgroundColor: Colors.blueAccent.withOpacity(0.15),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              child: const Text('Finish', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.w700)),
+            ),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+            // Dynamic Summary Strip
+            Container(
+              color: cardColor,
+              padding: const EdgeInsets.fromLTRB(0, 4, 0, 16),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  const Icon(Icons.keyboard_arrow_down, color: Colors.white),
-                  const Text('PO TRACKER', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
-                  GestureDetector(
-                    onTap: _onFinishTapped,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(color: cardColor, borderRadius: BorderRadius.circular(12)),
-                      child: const Text('Finish', style: TextStyle(color: accentColor, fontWeight: FontWeight.bold)),
+                  _buildMetric('Duration', '45:12', Icons.timer_outlined),
+                  _buildMetric('Volume', '${_calculateVolume().toStringAsFixed(0)} lbs', Icons.fitness_center),
+                  _buildMetric('Sets', '${_rows.where((r) => r.isCompleted).length}', Icons.format_list_numbered),
+                ],
+              ),
+            ),
+            
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  // Gorgeous Rounded Dark Card for Exercise
+                  Container(
+                    decoration: BoxDecoration(
+                      color: cardColor,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.white10),
+                    ),
+                    child: Column(
+                      children: [
+                        // Exercise Header
+                        InkWell(
+                          onTap: _showExercisePicker,
+                          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    _selectedExercise!.name, 
+                                    style: const TextStyle(color: Colors.blueAccent, fontSize: 18, fontWeight: FontWeight.w800),
+                                    overflow: TextOverflow.ellipsis,
+                                  )
+                                ),
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(6)),
+                                  child: Text(_selectedExercise!.category.name.toUpperCase(), style: const TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                                ),
+                                const SizedBox(width: 8),
+                                const Icon(Icons.more_horiz, color: Colors.white54),
+                              ],
+                            ),
+                          ),
+                        ),
+                        
+                        // Clean Notes Field
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: TextField(
+                            style: const TextStyle(color: Colors.white, fontSize: 14),
+                            decoration: InputDecoration(
+                              hintText: 'Add notes here...',
+                              hintStyle: const TextStyle(color: Colors.white38),
+                              filled: true,
+                              fillColor: const Color(0xFF2C2C2E),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        
+                        // Professional Table Headers
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Row(
+                            children: const [
+                              SizedBox(width: 36, child: Text('SET', style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+                              Expanded(flex: 3, child: Text('PREVIOUS', style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+                              SizedBox(width: 60, child: Text('LBS', style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+                              SizedBox(width: 12),
+                              SizedBox(width: 60, child: Text('REPS', style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+                              SizedBox(width: 44, child: Icon(Icons.check, color: Colors.white54, size: 16)),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        
+                        // Render Row Sets
+                        ..._rows.map((row) => _buildSetRow(row)).toList(),
+                        
+                        // Modern Add Set Action Button
+                        Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: OutlinedButton(
+                            onPressed: _addSet,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.blueAccent, 
+                              side: const BorderSide(color: Colors.white10),
+                              backgroundColor: Colors.white.withOpacity(0.02),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              minimumSize: const Size.fromHeight(44),
+                            ),
+                            child: const Text('+ Add Set', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
             ),
             
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _buildStatColumn('Duration', '45:12'),
-                _buildStatColumn('Volume (lbs)', '12,500'),
-                _buildStatColumn('Sets', '${_rows.where((r) => r.isCompleted).length}'),
-              ],
-            ),
-            const SizedBox(height: 24),
-            
-            Expanded(
-              child: SingleChildScrollView(
-                child: Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 16),
-                  decoration: BoxDecoration(
-                    color: cardColor,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Column(
-                    children: [
-                      GestureDetector(
-                        onTap: _showExercisePicker,
-                        child: Container(
-                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                          color: Colors.transparent, 
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  _selectedExercise!.name, 
-                                  style: const TextStyle(color: Colors.blueAccent, fontSize: 18, fontWeight: FontWeight.bold),
-                                  overflow: TextOverflow.ellipsis,
-                                )
-                              ),
-                              const SizedBox(width: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8)),
-                                child: Text(_selectedExercise!.category.name.toUpperCase(), style: const TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
-                              ),
-                              const SizedBox(width: 8),
-                              const Icon(Icons.keyboard_arrow_down, color: Colors.blueAccent),
-                            ],
-                          ),
-                        ),
-                      ),
-                      
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        child: Row(
-                          children: const [
-                            SizedBox(width: 40, child: Text('SET', style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
-                            Expanded(flex: 3, child: Text('PREVIOUS', style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
-                            Expanded(flex: 2, child: Text('LBS', style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
-                            Expanded(flex: 2, child: Text('REPS', style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
-                            SizedBox(width: 40, child: Icon(Icons.check, color: Colors.white54, size: 16)),
-                          ],
-                        ),
-                      ),
-                      
-                      ..._rows.map((row) => _buildSetRow(row)).toList(),
-                      
-                      Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: TextButton(
-                          onPressed: _addSet,
-                          style: TextButton.styleFrom(
-                            backgroundColor: Colors.white.withOpacity(0.05),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                            minimumSize: const Size.fromHeight(40),
-                          ),
-                          child: const Text('+ Add Set', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold, fontSize: 14)),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            
+            // Sticky Calculation Panel / Banner
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              color: _bannerColor,
-              child: Text(
-                _bannerMessage,
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
-                textAlign: TextAlign.center,
+              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+              decoration: BoxDecoration(
+                color: _bannerColor,
+                boxShadow: [
+                  BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 10, offset: const Offset(0, -5))
+                ],
+              ),
+              child: SafeArea(
+                top: false,
+                child: Text(
+                  _bannerMessage,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
+                  textAlign: TextAlign.center,
+                ),
               ),
             ),
           ],
         ),
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        backgroundColor: const Color(0xFF1C1C1E),
-        selectedItemColor: Colors.blueAccent,
-        unselectedItemColor: Colors.white54,
-        showSelectedLabels: false,
-        showUnselectedLabels: false,
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.history), label: 'History'),
-          BottomNavigationBarItem(icon: Icon(Icons.add_circle, size: 36), label: 'Workout'),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
-        ],
       ),
     );
   }
